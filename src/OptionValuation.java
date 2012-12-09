@@ -274,7 +274,6 @@ public class OptionValuation {
 		
 		double usCall[] = new double[values.length];
 		double usSell[] = new double[values.length];
-		double originalK = K;
 		
 		for(int i = 0; i < values.length; i++){
 			double val = values[i] - K;
