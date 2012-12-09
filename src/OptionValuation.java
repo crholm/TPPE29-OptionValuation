@@ -1,33 +1,43 @@
+import java.util.Dictionary;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Properties;
+import java.util.Set;
+
 import org.apache.commons.math3.distribution.NormalDistribution;
 
 
 public class OptionValuation {
 	
 	
-	static double bankDaysPerYear = 252;
-	static double rateDaysPerYear = 360;
-	double T;
+	static final double bankDaysPerYear = 252;
+	static final double rateDaysPerYear = 360;
+	
+	private double T;
+	
+	private double periods;
+	private double deltaT;
 	
 	
-	double periods;
+	private double K;
+	private double S ;
+	private double SSVX3;
+	private double r;
+	private double monthlyRate;
 	
-	double deltaT;
+	private double sigma;
 	
+	private double u;
+	private double d;
 	
-	double K;
-	double S ;
-	double SSVX3;
-	double r = SSVX3;
+	private double p;
+	private double p_1;
+	private double nrOfMonths;
 	
-	double sigma;
+	private double ePow_rt;
 	
-	double u;
-	double d;
-	
-	double p;
-	double p_1;
-	
-	double ePow_rt;
+	Dictionary<Integer, Double> dividents = new Hashtable<Integer, Double>();
+	Dictionary<Integer, Double> ladderSteps = new Hashtable<Integer, Double>();
 	
 	public OptionValuation(double K, double S, double SSVX3, double sigma, int nrOfMonths){
 		
@@ -35,12 +45,20 @@ public class OptionValuation {
 		this.S = S;
 		this.SSVX3 = SSVX3;
 		this.r = SSVX3;
+		this.monthlyRate = r/12;
 		this.sigma = sigma;
 		this.T = bankDaysPerYear/12*nrOfMonths;
-					
+		this.nrOfMonths = nrOfMonths;
 	}
 	
+	public void addDivitent(int endOfMonth, double divident){
+		dividents.put(endOfMonth, divident);
+	}
 	
+	public void addLadderStep(int endOfMonth, double K){
+		ladderSteps.put(endOfMonth, K);
+	}
+
 	public void setBinConstants(int periods){
 		this.periods = (double)periods;
 		deltaT = T/periods/bankDaysPerYear;
@@ -50,6 +68,18 @@ public class OptionValuation {
 		p = (Math.exp( (r*deltaT/periods)) - d ) / (u-d);
 		p_1 = 1-p;
 		ePow_rt = Math.exp(-deltaT*r);
+		if(!ladderSteps.isEmpty()){
+			ladderSteps.put(-1, K);
+			int max = -1;
+			Enumeration<Integer> en = ladderSteps.keys();
+			while(en.hasMoreElements()){
+				int s = en.nextElement();
+				if(s > max)
+					max = s;
+			}
+			K = ladderSteps.get(max);
+		}
+		
 	}
 	
 	public double callBlackAndScholeEuroOptionPricing(){
@@ -79,6 +109,10 @@ public class OptionValuation {
 	
 	
 	public double callBinomialEuroOptionPricing(int periods){
+		
+		if(!dividents.isEmpty())
+			setSpotPriceWithDividens();
+		
 		setBinConstants(periods);
 		
 		double vals[] = calculateFinalValuesCall();
@@ -94,11 +128,18 @@ public class OptionValuation {
 		return calculateOptionPrice(vals);
 	}
 	
-	
-	
-	
 	public double callBinomialUSOptionPricing(int periods){
-		return callBinomialEuroOptionPricing(periods);
+		if(dividents.isEmpty() && ladderSteps.isEmpty())
+			return callBinomialEuroOptionPricing(periods);
+		
+		setSpotPriceWithDividens();
+		
+		setBinConstants(periods);
+		
+		double vals[] = calculateFinalValues();
+		
+		return calculateUSCallOptionPriceWithDividens(vals);
+		
 	}
 	
 	public double putBinomialUSOptionPricing(int periods){
@@ -106,10 +147,17 @@ public class OptionValuation {
 		
 		double vals[] = calculateFinalValues();
 		
-		return calculateUSOptionPrice(vals);
+		return calculateUSPutOptionPrice(vals);
 	}
 	
-	
+	private void setSpotPriceWithDividens(){
+		Enumeration<Integer> en = dividents.keys();
+		while(en.hasMoreElements()){
+			int month = en.nextElement();
+			double div = dividents.get(month);
+			S = S - (div/(Math.pow((1+monthlyRate), month)));
+		}
+	}
 	
 	private double[] calculateFinalValues(){
 		double values[] = new double[(int)(periods+1)];
@@ -171,7 +219,7 @@ public class OptionValuation {
 		return reduced[0];
 	}
 	
-	private double calculateUSOptionPrice(double values[]){
+	private double calculateUSPutOptionPrice(double values[]){
 		double usPut[] = new double[values.length];
 
 		double usSell[] = new double[values.length];
@@ -216,6 +264,90 @@ public class OptionValuation {
 		
 		
 		return usPut[0];
+	}
+	
+	
+		
+	private double calculateUSCallOptionPriceWithDividens(double values[]){
+		double MonthPerPeriods = nrOfMonths/periods;
+		double periodRate = r/(12/MonthPerPeriods);
+		
+		double usCall[] = new double[values.length];
+		double usSell[] = new double[values.length];
+		double originalK = K;
+		
+		for(int i = 0; i < values.length; i++){
+			double val = values[i] - K;
+			
+			usSell[i] = val;
+			
+			if(val > 0){
+				usCall[i] = val;
+
+			}else{
+				usCall[i] = 0;
+
+			}
+		}
+		
+		int pointer = values.length;
+		double divitent = 0;
+		
+		
+		
+		
+		for(int i = 0; i < values.length+1; i++){
+			
+			divitent = divitent/(1+periodRate);
+			
+			if( (int)(nrOfMonths - MonthPerPeriods*i) != (int)(nrOfMonths - MonthPerPeriods*i-1) ){
+				Double d = dividents.get((int)(nrOfMonths - MonthPerPeriods*i));
+				if(d != null){
+					divitent += divitent;
+				}
+			}
+			
+			if(!ladderSteps.isEmpty()){
+				int currentMonth = (int)(nrOfMonths - MonthPerPeriods*i + 0.5);
+				int candidate = 1000000000;
+				Enumeration<Integer> enumeration = ladderSteps.keys();
+				while(enumeration.hasMoreElements()){
+					int m = enumeration.nextElement();
+					if(currentMonth > m && m < candidate)
+						candidate = m;
+				}	
+				try{
+					K = ladderSteps.get(candidate);
+				}catch(RuntimeException e){
+					System.out.println("K " + K);
+					System.out.println("candidate " + candidate);
+					System.out.println("persiod " + i);
+					System.out.println("currentmonth " + currentMonth);
+				}
+			}
+			
+			for(int j = 0; j < pointer-1; j++){
+				
+				values[j] = values[j]/u;
+				
+				usSell[j] = values[j] - K + divitent; 
+				
+				double alt1 = ePow_rt*(p*usCall[j] + p_1*usCall[j+1]);
+				double alt2 = usSell[j];
+				
+				if(alt1 > alt2){
+					usCall[j] = alt1;
+				}else{
+					usCall[j] = alt2;
+				}
+			}
+			
+			pointer--;
+			
+		}		
+		
+		
+		return usCall[0];
 	}
 	
 	
@@ -300,14 +432,94 @@ public class OptionValuation {
 		
 		double euPut = op.putBinomialEuroOptionPricing(periods);
 
-		System.out.println("2A, Diffrence of American and Europeen Put: ");
+		System.out.println("2B, Diffrence of American and Europeen Put: ");
 		System.out.println("    American Put:  " + usPut);
 		System.out.println("    European Put: -" + euPut);
 		System.out.println("    Result:        " + (usPut-euPut));
+		System.out.println();
 		
 
 //Uppgift 3
 		
+		BASprice = 6.3061112617;
+		K = 70;
+		S = 62.9;
+		SSVX3 = 0.0107;
+		sigma = 0.2480265295;
+		nrOfMonths = 20;
+		op = new OptionValuation(K, S, SSVX3, sigma, nrOfMonths);
+		op.addDivitent(7, 4);
+		op.addDivitent(19, 5);
+		
+		periods = 420;
+		
+		
+		
+		System.out.println("---------------------------------------------------------------------\n");
+		System.out.println("Part 3 data:");
+		System.out.println("K:      " + K);
+		System.out.println("S:      " + S);
+		System.out.println("SSVX3:  " + SSVX3);
+		System.out.println("sigma:  " + sigma);
+		System.out.println("Months: " + nrOfMonths);
+		System.out.println("sigma:  " + sigma);
+		System.out.println("Divident at Month 7: 4");
+		System.out.println("Divident at Month 19: 5");
+		System.out.println();
+		
+		
+		System.out.println("3, American Call on Ericsson with Divident: " + op.callBinomialUSOptionPricing(periods));
+		
+		op = new OptionValuation(K, S, SSVX3, sigma, nrOfMonths);
+		op.addDivitent(7, 4);
+		op.addDivitent(19, 5);
+		
+		System.out.println("   Ref: European Call with divident:        " + op.callBinomialEuroOptionPricing(periods));
+		System.out.println();
+		
+//Uppgift 4		
+		
+		BASprice = 6.3061112617;
+		K = 70;
+		S = 62.9;
+		SSVX3 = 0.0107;
+		sigma = 0.2480265295;
+		nrOfMonths = 20;
+		op = new OptionValuation(K, S, SSVX3, sigma, nrOfMonths);
+		op.addDivitent(7, 4);
+		op.addDivitent(19, 5);
+		op.addLadderStep(1, 75);
+		op.addLadderStep(5, 80);
+		op.addLadderStep(10, 85);
+		op.addLadderStep(16, 90);
+		
+		periods = 420;
+		
+		System.out.println("---------------------------------------------------------------------\n");
+		System.out.println("Part 4 data:");
+		System.out.println("K:      " + K);
+		System.out.println("S:      " + S);
+		System.out.println("SSVX3:  " + SSVX3);
+		System.out.println("sigma:  " + sigma);
+		System.out.println("Months: " + nrOfMonths);
+		System.out.println("sigma:  " + sigma);
+		System.out.println("Divident at Month 7: 4");
+		System.out.println("Divident at Month 19: 5");
+		System.out.println("Ladder setp at end of Month 1:  75");
+		System.out.println("Ladder setp at end of Month 5:  80");
+		System.out.println("Ladder setp at end of Month 10: 85");
+		System.out.println("Ladder setp at end of Month 16: 95");
+		System.out.println();
+		
+		System.out.println("4, American Ladder Call on Ericsson with Divident:       " + op.callBinomialUSOptionPricing(periods));
+		op = new OptionValuation(K, S, SSVX3, sigma, nrOfMonths);
+		op.addDivitent(7, 4);
+		op.addDivitent(19, 5);
+		op.addLadderStep(1, 75);
+		op.addLadderStep(5, 80);
+		op.addLadderStep(10, 85);
+		op.addLadderStep(16, 90);
+		System.out.println("   Ref: Europeand Ladder Call on Ericsson with Divident: " + op.callBinomialEuroOptionPricing(periods));
 		
 
 	}
